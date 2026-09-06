@@ -29,6 +29,17 @@ export interface CompactRows {
     total: number;
     /** Der `hint:`-Text, den der Server bei leeren Ergebnissen mitschickt. */
     hint?: string;
+    /**
+     * Die Fusszeilen, die der Server seit dem schlanken Ausgabevertrag
+     * (#1597) mitschickt: wie viele Zeilen geliefert wurden, ob `total` exakt
+     * oder eine Untergrenze ist (`eq` / `gte`), ob mehr da waere und ob
+     * gekappt wurde. Optional, weil die Aufzeichnungen von vor dem Vertrag
+     * sie nicht tragen; wo sie da sind, sind sie die ehrlichere Auskunft.
+     */
+    returned?: number;
+    totalRelation?: string;
+    hasMore?: boolean;
+    truncated?: boolean;
 }
 
 /** Eine geparste search_graph-Antwort. */
@@ -43,6 +54,10 @@ export interface SearchResults {
     rows: string[][];
     /** True, wenn der Server abgeschnitten hat und mehr da waere. */
     hasMore: boolean;
+    /** Die weiteren Fusszeilen des schlanken Vertrags (#1597), siehe CompactRows. */
+    returned?: number;
+    totalRelation?: string;
+    truncated?: boolean;
 }
 
 const ROWS_HEAD = /^rows:\s*(\d+)\s*\(cols:\s*([^)]*)\)\s*$/;
@@ -51,6 +66,9 @@ const TOTAL_LINE = /^total:\s*(\d+)\s*$/;
 const HINT_LINE = /^hint:\s*(.*)$/;
 const MODE_LINE = /^search_mode:\s*(\S+)\s*$/;
 const HAS_MORE_LINE = /^has_more:\s*(true|false)\s*$/;
+const RETURNED_LINE = /^returned:\s*(\d+)\s*$/;
+const TOTAL_RELATION_LINE = /^total_relation:\s*(\S+)\s*$/;
+const TRUNCATED_LINE = /^truncated:\s*(true|false)\s*$/;
 const DATA_LINE = /^ {2}\S/;
 
 /** Zerlegt eine Datenzeile in Zellen und nimmt Anfuehrungszeichen weg. */
@@ -177,6 +195,10 @@ export function parseCompactRows(text: string): CompactRows {
 
     let total: number | undefined;
     let hint: string | undefined;
+    let returned: number | undefined;
+    let totalRelation: string | undefined;
+    let hasMore: boolean | undefined;
+    let truncated: boolean | undefined;
     for (; i < lines.length; i += 1) {
         const line = lines[i];
         if (line.trim().length === 0) {
@@ -192,6 +214,26 @@ export function parseCompactRows(text: string): CompactRows {
             hint = unquote(hintMatch[1]);
             continue;
         }
+        const returnedMatch = RETURNED_LINE.exec(line);
+        if (returnedMatch !== null) {
+            returned = Number.parseInt(returnedMatch[1], 10);
+            continue;
+        }
+        const relationMatch = TOTAL_RELATION_LINE.exec(line);
+        if (relationMatch !== null) {
+            totalRelation = relationMatch[1];
+            continue;
+        }
+        const hasMoreMatch = HAS_MORE_LINE.exec(line);
+        if (hasMoreMatch !== null) {
+            hasMore = hasMoreMatch[1] === 'true';
+            continue;
+        }
+        const truncatedMatch = TRUNCATED_LINE.exec(line);
+        if (truncatedMatch !== null) {
+            truncated = truncatedMatch[1] === 'true';
+            continue;
+        }
         throw new Error(`unbekannte Fusszeile einer kompakten Antwort: ${line.trim()}`);
     }
 
@@ -202,6 +244,18 @@ export function parseCompactRows(text: string): CompactRows {
     const out: CompactRows = { columns, rows, total };
     if (hint !== undefined) {
         out.hint = hint;
+    }
+    if (returned !== undefined) {
+        out.returned = returned;
+    }
+    if (totalRelation !== undefined) {
+        out.totalRelation = totalRelation;
+    }
+    if (hasMore !== undefined) {
+        out.hasMore = hasMore;
+    }
+    if (truncated !== undefined) {
+        out.truncated = truncated;
     }
     return out;
 }
@@ -218,6 +272,9 @@ export function parseSearchResults(text: string): SearchResults {
     let declared: number | undefined;
     let rows: string[][] | undefined;
     let hasMore: boolean | undefined;
+    let returned: number | undefined;
+    let totalRelation: string | undefined;
+    let truncated: boolean | undefined;
 
     let i = 0;
     while (i < lines.length) {
@@ -242,6 +299,24 @@ export function parseSearchResults(text: string): SearchResults {
         const hasMoreMatch = HAS_MORE_LINE.exec(line);
         if (hasMoreMatch !== null) {
             hasMore = hasMoreMatch[1] === 'true';
+            i += 1;
+            continue;
+        }
+        const returnedMatch = RETURNED_LINE.exec(line);
+        if (returnedMatch !== null) {
+            returned = Number.parseInt(returnedMatch[1], 10);
+            i += 1;
+            continue;
+        }
+        const relationMatch = TOTAL_RELATION_LINE.exec(line);
+        if (relationMatch !== null) {
+            totalRelation = relationMatch[1];
+            i += 1;
+            continue;
+        }
+        const truncatedMatch = TRUNCATED_LINE.exec(line);
+        if (truncatedMatch !== null) {
+            truncated = truncatedMatch[1] === 'true';
             i += 1;
             continue;
         }
@@ -277,7 +352,17 @@ export function parseSearchResults(text: string): SearchResults {
         throw new Error('Suchantwort ohne has_more-Zeile');
     }
 
-    return { total, mode, columns, rows, hasMore };
+    const out: SearchResults = { total, mode, columns, rows, hasMore };
+    if (returned !== undefined) {
+        out.returned = returned;
+    }
+    if (totalRelation !== undefined) {
+        out.totalRelation = totalRelation;
+    }
+    if (truncated !== undefined) {
+        out.truncated = truncated;
+    }
+    return out;
 }
 
 /** Verbindet Spaltennamen und Zellen zu einem Objekt je Zeile. */

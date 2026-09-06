@@ -120,6 +120,28 @@ describe('parseCompactRows', () => {
         expect(() => parseCompactRows(broken)).toThrow(/rows: 2 an, geliefert wurden 1/);
     });
 
+    it('liest die Zeilenform des schlanken Vertrags mit ihren Fusszeilen', () => {
+        const lean = [
+            'rows: 2  (cols: n.name n.file_path)',
+            '  loadConfig src/config.ts',
+            '  isProduction src/config.ts',
+            'returned: 2',
+            'total: 2',
+            'total_relation: eq',
+            'has_more: false',
+            'truncated: false',
+            '',
+        ].join('\n');
+        const parsed = parseCompactRows(lean);
+        expect(parsed.rows).toEqual([['loadConfig', 'src/config.ts'], ['isProduction', 'src/config.ts']]);
+        expect(parsed.total).toBe(2);
+        expect(parsed.returned).toBe(2);
+        expect(parsed.totalRelation).toBe('eq');
+        expect(parsed.hasMore).toBe(false);
+        expect(parsed.truncated).toBe(false);
+        expect(parsed.hint).toBeUndefined();
+    });
+
     it('wirft ohne total-Zeile, statt total zu erfinden', () => {
         const broken = ['rows: 1  (cols: b.name)', '  validateUser', ''].join('\n');
         expect(() => parseCompactRows(broken)).toThrow(/ohne total-Zeile/);
@@ -161,6 +183,35 @@ describe('parseSearchResults', () => {
 
     it('nimmt die Zeilenform nicht als Suchform an', () => {
         expect(() => parseSearchResults(CALLS_RESPONSE)).toThrow(/unbekannte Zeile|unbekannter Kopf/);
+    });
+
+    /*
+     * Der schlanke Ausgabevertrag (#1597) haengt an beide Formen weitere
+     * Fusszeilen: returned, total_relation, truncated (und bei der Suche
+     * steht search_mode jetzt nach dem Kopf). Woertlich, was der Server auf
+     * main am 2026-09-06 fuer fixtures/atlas-sample geantwortet hat; ein
+     * Parser, der eine dieser Zeilen nicht kennt, lieferte vorher gar nichts.
+     */
+    it('liest die Suchantwort des schlanken Vertrags mit ihren Fusszeilen', () => {
+        const lean = [
+            'results: 1  (cols: qn label file lines rank)',
+            '  atlas-sample.src.services.userService.createUser Function src/services/userService.ts 23-36 -15.26',
+            'total: 1',
+            'total_relation: eq',
+            'search_mode: bm25',
+            'returned: 1',
+            'has_more: false',
+            'truncated: false',
+            '',
+        ].join('\n');
+        const parsed = parseSearchResults(lean);
+        expect(parsed.rows).toHaveLength(1);
+        expect(parsed.total).toBe(1);
+        expect(parsed.mode).toBe('bm25');
+        expect(parsed.hasMore).toBe(false);
+        expect(parsed.returned).toBe(1);
+        expect(parsed.totalRelation).toBe('eq');
+        expect(parsed.truncated).toBe(false);
     });
 });
 
