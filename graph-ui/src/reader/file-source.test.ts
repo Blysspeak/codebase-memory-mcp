@@ -150,6 +150,88 @@ describe('loadFileDocument', () => {
     });
 });
 
+describe('loadFileDocument, seit dem schlanken Vertrag (#1597)', () => {
+
+    /*
+     * Auf main liefert get_code_snippet Quelltext in Seiten zu 500 Zeilen und
+     * nennt die naechste in next_start_line; die wirkliche Dateilaenge steht
+     * in original_end_line. Die Formen unten sind die, die der Server am
+     * 2026-09-06 fuer src/ui/http_server.c (2244 Zeilen) geantwortet hat.
+     */
+    it('fordert vollen Quelltext an und fuegt die Seiten zusammen', async () => {
+        const { client, rpc } = clientFor([
+            moduleRoute('probe-small.src.ui.http_server', 2244),
+            {
+                tool: 'get_code_snippet',
+                when: (args) => args['start_line'] === undefined,
+                json: {
+                    qualified_name: 'probe-small.src.ui.http_server', label: 'Module',
+                    start_line: 1, end_line: 500, source_truncated: true, source_clipped: true,
+                    next_start_line: 501, original_end_line: 1000, source_mode: 'full',
+                    source: 'page one\n',
+                },
+            },
+            {
+                tool: 'get_code_snippet',
+                when: (args) => args['start_line'] === 501,
+                json: {
+                    qualified_name: 'probe-small.src.ui.http_server', label: 'Module',
+                    start_line: 501, end_line: 1000, source_mode: 'full', source: 'page two\n',
+                },
+            },
+        ]);
+
+        const doc = await loadFileDocument(client, PROJECT, 'src/ui/http_server.c');
+
+        expect(doc.source).toBe('page one\npage two\n');
+        expect(doc.firstLine).toBe(1);
+        expect(doc.lastLine).toBe(1000);
+        expect(doc.fileLastLine).toBe(1000);
+        expect(doc.truncated).toBe(false);
+        expect(doc.truncationNote).toBe('');
+        const calls = rpc.callsTo('get_code_snippet');
+        expect(calls).toHaveLength(2);
+        expect(calls[0]?.args['source_mode']).toBe('full');
+        expect(calls[1]?.args['start_line']).toBe(501);
+        expect(calls[1]?.args['max_lines']).toBe(500);
+    });
+
+    it('benennt die fehlende Seite, wenn eine nicht ankommt', async () => {
+        const { client } = clientFor([
+            moduleRoute('probe-small.src.ui.http_server', 2244),
+            {
+                tool: 'get_code_snippet',
+                when: (args) => args['start_line'] === undefined,
+                json: {
+                    start_line: 1, end_line: 500, source_clipped: true, next_start_line: 501,
+                    original_end_line: 1000, source_mode: 'full', source: 'page one\n',
+                },
+            },
+            { tool: 'get_code_snippet', when: (args) => args['start_line'] === 501, toolError: 'boom' },
+        ]);
+
+        const doc = await loadFileDocument(client, PROJECT, 'src/ui/http_server.c');
+
+        expect(doc.source).toBe('page one\n');
+        expect(doc.lastLine).toBe(500);
+        expect(doc.truncated).toBe(true);
+        expect(doc.truncationNote).toContain('501-1000');
+        expect(doc.truncationNote).toContain('did not arrive');
+    });
+
+    it('nimmt den Platzhalter des Servers nicht als Quelltext', async () => {
+        const { client } = clientFor([
+            moduleRoute('probe-small.src.ui.http_server', 2244),
+            snippetRoute({ start_line: 1, end_line: 500, source_mode: 'full', source: '(source not available)' }),
+        ]);
+
+        await expect(loadFileDocument(client, PROJECT, 'src/ui/http_server.c'))
+            .rejects.toBeInstanceOf(FileNotReadableError);
+        await expect(loadFileDocument(client, PROJECT, 'src/ui/http_server.c'))
+            .rejects.toThrow(/could not read/);
+    });
+});
+
 describe('truncationNoteFor', () => {
 
     it('nennt Zeilen, Deckel und den Grund, warum nicht nachgeladen wird', () => {

@@ -94,6 +94,18 @@ describe('die Werkzeuge, die von sich aus JSON liefern', () => {
         expect(snippet.source).toContain('export function createUser');
     });
 
+    it('bittet um vollen Quelltext, seit der Server Container sonst nur umreisst', async () => {
+        const { client: c, rpc } = client([{
+            tool: 'get_code_snippet',
+            json: { start_line: 1, end_line: 500, source: 'x\n', next_start_line: 501, original_end_line: 900, source_mode: 'full' },
+        }]);
+        const page = await c.getCodeSnippet(RECORDED_PROJECT, 'x', { startLine: 1, maxLines: 500 });
+        expect(page.next_start_line).toBe(501);
+        expect(page.original_end_line).toBe(900);
+        expect(page.source_mode).toBe('full');
+        expect(rpc.callsTo('get_code_snippet')[0]?.args).toMatchObject({ source_mode: 'full', start_line: 1, max_lines: 500 });
+    });
+
     it('liest den Indexzustand', async () => {
         const { client: c } = client([{
             tool: 'index_status',

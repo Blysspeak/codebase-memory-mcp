@@ -337,11 +337,32 @@ export class RpcIntelligenceClient {
         return readSearchRows(rows, parsed.total);
     }
 
-    async getCodeSnippet(project: string, qualifiedName: string): Promise<CodeSnippetResult> {
-        return readCodeSnippet(await this.json('get_code_snippet', {
+    /**
+     * A symbol's or a module's source.
+     *
+     * `source_mode: 'full'` is part of the request since the lean output
+     * contract (#1597): without it the server outlines every container of
+     * 200 lines or more and sends members instead of source. Full source
+     * comes in pages of at most 500 lines; `window` names the page, and the
+     * answer's `next_start_line` says whether another one follows.
+     */
+    async getCodeSnippet(
+        project: string,
+        qualifiedName: string,
+        window?: { startLine?: number; maxLines?: number },
+    ): Promise<CodeSnippetResult> {
+        const args: Record<string, unknown> = {
             project,
             qualified_name: qualifiedName,
-        }));
+            source_mode: 'full',
+        };
+        if (window?.startLine !== undefined) {
+            args['start_line'] = window.startLine;
+        }
+        if (window?.maxLines !== undefined) {
+            args['max_lines'] = window.maxLines;
+        }
+        return readCodeSnippet(await this.json('get_code_snippet', args));
     }
 
     async getArchitecture(project: string, aspects: string[] = ['all']): Promise<ArchitectureResult> {

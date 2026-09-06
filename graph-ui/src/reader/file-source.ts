@@ -13,19 +13,22 @@
  *    Schnipsel (cbm/src/mcp/mcp.c). Der Server sagt es selbst mit
  *    `source_clipped`. Eine laengere Datei kommt also unvollstaendig an, und
  *    der Reader schreibt darunter, welche Zeilen fehlen und warum.
- * 2. **Nachladen geht nicht.** `get_code_snippet` nimmt `qualified_name`,
- *    `project` und `include_neighbors`, sonst nichts. `start_line` und
- *    `end_line` werden angenommen und ignoriert: dieselbe Anfrage mit
- *    start_line 501 liefert wieder die Zeilen 1 bis 500. Gemessen am
- *    laufenden Server, nachzulesen in verification/w2/reader.json unter
- *    `windowSemantics`. Es gibt darum kein "load more": eine Schaltflaeche,
- *    die dasselbe noch einmal holt, waere eine Luege in Knopfform.
+ * 2. **Nachladen gibt es seit dem schlanken Ausgabevertrag (#1597).** Bis
+ *    dahin wurden `start_line` und `end_line` angenommen und ignoriert
+ *    (gemessen, verification/w2/reader.json unter `windowSemantics`). Seit
+ *    dem Vertrag liefert `source_mode: full` Seiten zu 500 Zeilen, und die
+ *    Antwort nennt in `next_start_line` die naechste; loadFileDocument holt
+ *    sie nacheinander und fuegt sie zusammen. Ohne `source_mode: full`
+ *    umreisst der Server jeden Container ab 200 Zeilen und schickt gar
+ *    keinen Quelltext. Einen "load more"-Knopf gibt es weiterhin nicht: die
+ *    Seiten kommen von selbst, und was nicht kommt, steht als Satz darunter.
  * 3. **Nur, was indiziert ist.** Eine Datei ohne Modul-Knoten ist ueber diesen
  *    Weg nicht lesbar. Der Reader sagt das, statt eine leere Flaeche zu zeigen.
  */
 
 import { fileNodeForPath, moduleForFile, COLUMNS } from '../provider/cypher';
 import type { RpcIntelligenceClient } from '../provider/rpc-client';
+import type { CodeSnippetResult } from '../provider/rpc-schemas';
 import { moduleQualifiedName, moduleQnFromFileQn, normalizeWorkspacePath } from '../app/module-qn';
 
 /** Das Werkzeug, aus dem der Inhalt des Readers kommt. Der Beweislauf schreibt es mit. */
@@ -113,6 +116,23 @@ async function lookupModuleNode(
     return derived === undefined ? undefined : { qualifiedName: derived, source: 'graph-file' };
 }
 
+/** What the server writes in place of source when it cannot read the file. */
+export const SOURCE_UNAVAILABLE = '(source not available)';
+
+/** The server's page size for full source (MCP_SNIPPET_MAX_LINES). */
+export const SOURCE_PAGE_LINES = 500;
+
+/** More pages than this is not a source file this reader should be loading. */
+export const MAX_SOURCE_PAGES = 100;
+
+/** The note when the server pages source and a page did not arrive. */
+export function pagingNoteFor(lastLine: number, fileLastLine: number | undefined): string {
+    if (fileLastLine === undefined) {
+        return `lines after ${lastLine} not loaded: a further page of source did not arrive from the server (get_code_snippet).`;
+    }
+    return `lines ${lastLine + 1}-${fileLastLine} not loaded: a further page of source did not arrive from the server (get_code_snippet).`;
+}
+
 /**
  * Der Satz unter dem Quelltext, wenn nicht die ganze Datei angekommen ist.
  *
@@ -152,31 +172,74 @@ export async function loadFileDocument(
 
     const qualifiedName = node.qualifiedName;
     const snippet = await client.getCodeSnippet(project, qualifiedName);
-    if (snippet.source.length === 0) {
+    if (snippet.source.length === 0 || snippet.source === SOURCE_UNAVAILABLE) {
         throw new FileNotReadableError(
             path,
-            `get_code_snippet returned no source for ${qualifiedName}.`,
+            snippet.source === SOURCE_UNAVAILABLE
+                ? `The server could not read ${path} from the repository (${qualifiedName}): `
+                    + 'the index knows the file, the disk does not have it where the index expects it.'
+                : `get_code_snippet returned no source for ${qualifiedName}.`,
         );
     }
 
+    /*
+     * Since the lean output contract the server pages source 500 lines at a
+     * time and names the next page in `next_start_line`. The pages are
+     * fetched one after the other and joined; a page that does not arrive
+     * ends the loading, and the note below names what is missing rather
+     * than a guess. Before the contract there was one window and no
+     * `next_start_line`, and that path is unchanged.
+     */
     const firstLine = snippet.start_line ?? 1;
-    const lastLine = snippet.end_line ?? firstLine;
-    const fileLastLine = node.endLine;
-    const clipped = snippet.source_clipped === true;
+    let source = snippet.source;
+    let lastLine = snippet.end_line ?? firstLine;
+    let next = snippet.next_start_line;
+    let pages = 1;
+    let pageFailed = false;
+    while (next !== undefined && pages < MAX_SOURCE_PAGES) {
+        let page: CodeSnippetResult;
+        try {
+            page = await client.getCodeSnippet(project, qualifiedName, {
+                startLine: next,
+                maxLines: SOURCE_PAGE_LINES,
+            });
+        } catch {
+            pageFailed = true;
+            break;
+        }
+        if (page.source.length === 0 || page.source === SOURCE_UNAVAILABLE
+            || (page.start_line !== undefined && page.start_line !== next)) {
+            pageFailed = true;
+            break;
+        }
+        if (!source.endsWith('\n')) {
+            source += '\n';
+        }
+        source += page.source;
+        lastLine = page.end_line ?? lastLine;
+        next = page.next_start_line;
+        pages += 1;
+    }
+    const fileLastLine = snippet.original_end_line ?? node.endLine;
+    const pagesMissing = pageFailed || next !== undefined;
+    const singleWindowClipped = pages === 1 && snippet.next_start_line === undefined
+        && snippet.source_clipped === true;
     const shortOfFile = fileLastLine !== undefined && fileLastLine > lastLine;
-    const truncated = clipped || shortOfFile;
+    const truncated = pagesMissing || singleWindowClipped || shortOfFile;
 
     const document: ReaderDocument = {
         path,
         qualifiedName,
         qnSource: qualifiedName === derivedQualifiedName ? 'derived' : node.source,
         derivedQualifiedName,
-        source: snippet.source,
+        source,
         firstLine,
         lastLine,
         truncated,
         truncationNote: truncated
-            ? truncationNoteFor(lastLine, fileLastLine, snippet.clipped_at_lines)
+            ? (pagesMissing
+                ? pagingNoteFor(lastLine, fileLastLine)
+                : truncationNoteFor(lastLine, fileLastLine, snippet.clipped_at_lines))
             : '',
     };
     if (fileLastLine !== undefined) {

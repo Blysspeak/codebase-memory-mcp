@@ -306,6 +306,14 @@ export interface CodeSnippetResult {
     start_line?: number;
     end_line?: number;
     source: string;
+    /** `full` or `outline` since the lean output contract; absent before it. */
+    source_mode?: string;
+    /** The server cut this page and says so (lean contract). */
+    source_truncated?: boolean;
+    /** The first line of the next page, when there is one (lean contract). */
+    next_start_line?: number;
+    /** The file's real last line when the answer is a page of it (lean contract). */
+    original_end_line?: number;
     /**
      * Der Server hat den Schnipsel gekappt und sagt es selbst.
      *
@@ -398,6 +406,23 @@ export function readCodeSnippet(value: unknown): CodeSnippetResult {
     const clippedAt = toOptionalNumber(raw['clipped_at_lines']);
     if (clippedAt !== undefined) {
         result.clipped_at_lines = clippedAt;
+    }
+    /* The lean output contract (#1597) pages source: `next_start_line` names
+     * the next page, `original_end_line` the file's real last line, and
+     * `source_mode` says whether source or an outline came back. */
+    if (typeof raw['source_mode'] === 'string') {
+        result.source_mode = raw['source_mode'] as string;
+    }
+    if (raw['source_truncated'] !== undefined) {
+        result.source_truncated = toBoolean(raw['source_truncated']);
+    }
+    const nextStart = toOptionalNumber(raw['next_start_line']);
+    if (nextStart !== undefined) {
+        result.next_start_line = nextStart;
+    }
+    const originalEnd = toOptionalNumber(raw['original_end_line']);
+    if (originalEnd !== undefined) {
+        result.original_end_line = originalEnd;
     }
     return result;
 }
