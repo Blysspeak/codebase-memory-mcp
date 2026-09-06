@@ -13,9 +13,9 @@ export interface SymbolCommit {
 
 export interface SymbolHistoryPayload {
   max_commits: number;
-  /* Normalized https forge base (e.g. "https://github.com/owner/repo");
-   * absent when the repo has no usable remote — then hashes render as
-   * plain text and #refs stay unlinked. */
+  /* Normalized https forge base (scheme, host, owner and repository, no
+   * trailing slash); absent when the repo has no usable remote — then
+   * hashes render as plain text and #refs stay unlinked. */
   remote_url?: string;
   available: boolean;
   /* Newest first, at most max_commits; absent on the unavailable paths. */

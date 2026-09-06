@@ -35,12 +35,14 @@ describe("linkifyRefs", () => {
 
 describe("forge URLs", () => {
   it("builds commit and issue/PR URLs from the remote base", () => {
-    const remote = "https://github.com/DeusData/codebase-memory-mcp";
+    /* A loopback base: the composition is host-agnostic, and the UI
+     * security audit forbids literal external URLs in this tree. */
+    const remote = "http://localhost:9749/DeusData/codebase-memory-mcp";
     expect(commitUrl(remote, "617a4b14")).toBe(
-      "https://github.com/DeusData/codebase-memory-mcp/commit/617a4b14",
+      "http://localhost:9749/DeusData/codebase-memory-mcp/commit/617a4b14",
     );
     expect(refUrl(remote, 123)).toBe(
-      "https://github.com/DeusData/codebase-memory-mcp/issues/123",
+      "http://localhost:9749/DeusData/codebase-memory-mcp/issues/123",
     );
   });
 });
