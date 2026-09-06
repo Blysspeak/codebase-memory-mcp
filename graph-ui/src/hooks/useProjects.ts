@@ -7,6 +7,70 @@ interface ProjectInfo {
   schema: SchemaInfo | null;
 }
 
+interface ProjectPage {
+  projects?: Project[];
+  has_more?: boolean;
+  next_offset?: number;
+}
+
+interface SchemaPage extends SchemaInfo {
+  has_more?: boolean;
+  next_offset?: number;
+}
+
+const PAGE_LIMIT = 500;
+
+function nextPageOffset(page: { has_more?: boolean; next_offset?: number }, offset: number) {
+  if (typeof page.has_more !== "boolean") {
+    throw new Error("Invalid pagination response");
+  }
+  if (!page.has_more) return null;
+  if (!Number.isInteger(page.next_offset) || page.next_offset! <= offset) {
+    throw new Error("Invalid pagination response");
+  }
+  return page.next_offset!;
+}
+
+async function fetchAllProjects(): Promise<Project[]> {
+  const projects: Project[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await callTool<ProjectPage>("list_projects", {
+      format: "json",
+      detail: "stats",
+      limit: PAGE_LIMIT,
+      offset,
+    });
+    projects.push(...(page.projects ?? []));
+    const next = nextPageOffset(page, offset);
+    if (next === null) return projects;
+    offset = next;
+  }
+}
+
+async function fetchFullSchema(project: string): Promise<SchemaInfo> {
+  const nodeLabels: SchemaInfo["node_labels"] = [];
+  const edgeTypes: SchemaInfo["edge_types"] = [];
+  let firstPage: SchemaPage | null = null;
+  let offset = 0;
+  for (;;) {
+    const page = await callTool<SchemaPage>("get_graph_schema", {
+      project,
+      format: "json",
+      limit: PAGE_LIMIT,
+      offset,
+    });
+    firstPage ??= page;
+    nodeLabels.push(...(page.node_labels ?? []));
+    edgeTypes.push(...(page.edge_types ?? []));
+    const next = nextPageOffset(page, offset);
+    if (next === null) {
+      return { ...firstPage, node_labels: nodeLabels, edge_types: edgeTypes };
+    }
+    offset = next;
+  }
+}
+
 interface UseProjectsResult {
   projects: ProjectInfo[];
   loading: boolean;
@@ -39,14 +103,10 @@ export function useProjects(): UseProjectsResult {
     setLoading(true);
     setError(null);
     try {
-      /* include_details carries node/edge totals and indexed_at — without it
-       * the tool returns names only and every count would need a schema scan. */
-      const result = await callTool<{ projects: Project[] }>("list_projects", {
-        include_details: true,
-        limit: 100,
-      });
+      /* Paginated, format json, detail stats: node/edge totals and indexed_at
+       * come with the list, so every card renders before any schema scan. */
+      const list = await fetchAllProjects();
       if (generation !== generationRef.current) return;
-      const list = result.projects ?? [];
 
       /* Render immediately from list_projects' own totals… */
       setProjects(
@@ -60,15 +120,13 @@ export function useProjects(): UseProjectsResult {
        * abandoned as soon as the tab unmounts or refreshes. */
       const candidates = list
         .filter(
-          (p) => !schemaCache.has(p.name) && (p.nodes ?? Infinity) <= SCHEMA_LAZY_MAX_NODES,
+          (p) => !schemaCache.has(p.name) && (p.nodes ?? 0) <= SCHEMA_LAZY_MAX_NODES,
         )
         .slice(0, SCHEMA_LAZY_MAX_PROJECTS);
       for (const p of candidates) {
         if (generation !== generationRef.current) return;
         try {
-          const schema = await callTool<SchemaInfo>("get_graph_schema", {
-            project: p.name,
-          });
+          const schema = await fetchFullSchema(p.name);
           schemaCache.set(p.name, schema);
           if (generation !== generationRef.current) return;
           setProjects((prev) =>

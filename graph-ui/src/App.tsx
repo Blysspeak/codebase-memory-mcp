@@ -87,6 +87,24 @@ export function App() {
   }, [route.tab]);
   const { tab: activeTab, project: selectedProject } = route;
 
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/ui-config")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((config) => {
+        if (!cancelled && typeof config?.version === "string" && config.version) {
+          setVersion(config.version);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* Normalize the URL on first load so it always carries the current route. */
   useEffect(() => {
     const initial = readRoute();
     window.history.replaceState(null, "", routeUrl(initial));
@@ -185,6 +203,14 @@ export function App() {
               <span className="text-[13px] font-semibold text-foreground/90 tracking-tight">
                 CBM Atlas
               </span>
+              {version && (
+                <span
+                  className="translate-y-px text-[10px] font-mono text-foreground/30"
+                  title="Server version"
+                >
+                  {version.startsWith("v") ? version : `v${version}`}
+                </span>
+              )}
             </div>
 
             {/* Context first: which project is everything below about? */}
