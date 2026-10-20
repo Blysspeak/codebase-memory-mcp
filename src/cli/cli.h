@@ -87,14 +87,20 @@ int cbm_cli_exit_status_after_maintenance(int exit_status, bool maintenance_canc
  * A freshness gate must not have to read anyone's account of itself: it reads
  * the process status. `index_repository` therefore grades its own outcome.
  *
- *   0  indexed, quality at or above the thresholds
- *   1  hard failure (pipeline fell over inside a reachable repository)
- *   2  indexed, but below a quality threshold — a graph that exists and lies
- *      about how much of the tree it covers is worse than no graph
- *   3  target unavailable: repo_path is absent, unreadable, or not a directory
+ *   0   indexed, quality at or above the thresholds
+ *   1   hard failure (pipeline fell over inside a reachable repository)
+ *   10  indexed, but below a quality threshold — a graph that exists and lies
+ *       about how much of the tree it covers is worse than no graph
+ *   11  target unavailable: repo_path is absent, unreadable, or not a directory
  *
  * 1 keeps its historical meaning so existing `|| fail` scripts are unaffected;
- * 2 and 3 are new and carve out cases that used to return 0 and 1.
+ * 10 and 11 are new and carve out cases that used to return 0 and 1.
+ *
+ * STABLE CONTRACT: these four values are public. CI pipelines branch on them,
+ * so they are never renumbered or reused for another outcome. 2 is
+ * deliberately not a verdict: the binary already returns 2 for a usage error
+ * (an invalid --tool-profile), and shells and CI tooling read 2 that way, so a
+ * verdict on 2 could not be told apart from a mistyped command line.
  *
  * The contract is opt-in: it applies only when CBM_GATE is set to a non-empty
  * value other than "0". Without it the CLI exits exactly as before, so a
@@ -114,8 +120,8 @@ int cbm_cli_exit_status_after_maintenance(int exit_status, bool maintenance_canc
 enum {
     CBM_CLI_EXIT_OK = 0,
     CBM_CLI_EXIT_FAILURE = 1,
-    CBM_CLI_EXIT_QUALITY = 2,
-    CBM_CLI_EXIT_TARGET = 3,
+    CBM_CLI_EXIT_QUALITY = 10,
+    CBM_CLI_EXIT_TARGET = 11,
 };
 
 /* Grade an index_repository result envelope. `base_status` is what the

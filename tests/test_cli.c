@@ -18263,8 +18263,20 @@ static void cli_gate_env_restore(cli_gate_env_t saved) {
     restore_test_env("CBM_GATE_MAX_PARTIAL_PCT", saved.partial_pct);
 }
 
+/* The verdict codes are a public contract: CI pipelines branch on the
+ * numbers, so a renumbering must fail here rather than in someone's
+ * pipeline. Neither verdict may sit on 2, which the binary already returns
+ * for a usage error and which shells and CI tooling read that way. */
+TEST(cli_index_exit_codes_are_a_stable_contract) {
+    ASSERT_EQ(CBM_CLI_EXIT_OK, 0);
+    ASSERT_EQ(CBM_CLI_EXIT_FAILURE, 1);
+    ASSERT_EQ(CBM_CLI_EXIT_QUALITY, 10);
+    ASSERT_EQ(CBM_CLI_EXIT_TARGET, 11);
+    PASS();
+}
+
 /* Without CBM_GATE the CLI exits exactly as it always did: a payload that
- * would grade 2 or 3 with the gate on keeps the base status. "0" and the
+ * would grade 10 or 11 with the gate on keeps the base status. "0" and the
  * empty string count as off, so an exported CBM_GATE=0 is not a surprise. */
 TEST(cli_index_exit_gate_off_keeps_base_status) {
     cli_gate_env_t saved = cli_gate_env_clear();
@@ -18387,7 +18399,7 @@ TEST(cli_index_exit_separates_missing_target_from_broken_run) {
 }
 
 /* Silence is never upgraded into a verdict. A payload the grader cannot
- * read says nothing about index quality, and inventing a 2 from it would
+ * read says nothing about index quality, and inventing a 10 from it would
  * fail runs for the crime of an unexpected response shape. */
 TEST(cli_index_exit_never_upgrades_silence) {
     cli_gate_env_t saved = cli_gate_env_clear();
@@ -18989,6 +19001,7 @@ SUITE(cli) {
     RUN_TEST(cli_stdin_args_gate_tracks_tool_schema_issue1359);
 
     /* index_repository exit contract */
+    RUN_TEST(cli_index_exit_codes_are_a_stable_contract);
     RUN_TEST(cli_index_exit_gate_off_keeps_base_status);
     RUN_TEST(cli_index_exit_clean_run_stays_zero);
     RUN_TEST(cli_index_exit_unusable_file_is_a_quality_failure);
