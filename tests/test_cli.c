@@ -18482,10 +18482,14 @@ TEST(cli_index_exit_unreadable_threshold_falls_back_to_default) {
     cli_gate_env_t saved = cli_gate_env_clear();
     const char *twenty_percent = "{\"status\":\"ok\",\"files_indexed\":100,"
                                  "\"parse_partial_count\":20,\"parse_unusable_count\":0}";
-    /* The last one overflows long: strtol clamps it to LONG_MAX with the
-     * whole string consumed, a ceiling no run could exceed. */
+    /* The numeric-looking values carry 50, not the default 10: a reader that
+     * wrongly accepted one would raise the ceiling above the 20% payload and
+     * pass the run, so every refusal is visible. " 10" could not show that,
+     * and plain strtol does accept a leading blank. The last one overflows
+     * long: strtol clamps it to LONG_MAX with the whole string consumed, a
+     * ceiling no run could exceed. */
     const char *unreadable[] = {
-        "abc", "1O", "10pct", " 10", "10 ", "", "1e1", "10.0", "99999999999999999999999"};
+        "abc", "1O", "50pct", " 50", "50 ", "", "5e1", "50.0", "99999999999999999999999"};
     for (size_t i = 0; i < sizeof(unreadable) / sizeof(unreadable[0]); i++) {
         cbm_setenv("CBM_GATE_MAX_PARTIAL_PCT", unreadable[i], 1);
         int status = cli_index_grade(twenty_percent, CBM_CLI_EXIT_OK);

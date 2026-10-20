@@ -160,21 +160,14 @@ int cbm_cli_exit_status_after_maintenance(int exit_status, bool maintenance_canc
 }
 
 /* One override, parsed strictly: a typo must not silently disable a gate, so
- * anything that is not a whole number falls back to the documented default. */
+ * anything that is not a whole number falls back to the documented default.
+ * cbm_env_long is the project's strict reader for exactly this case: it
+ * refuses empty text, blanks, trailing junk and values too large for a long
+ * (strtol would clamp those to LONG_MAX, a ceiling no run can exceed), and it
+ * reads the Windows environment the same way every other setting does. */
 static long cli_gate_threshold(const char *name, long fallback) {
-    const char *raw = getenv(name);
-    if (!raw || !raw[0]) {
-        return fallback;
-    }
-    char *end = NULL;
-    errno = 0;
-    long value = strtol(raw, &end, 10);
-    /* Overflow clamps to LONG_MAX with the whole string consumed, which would
-     * read as a ceiling no run can exceed: the one typo that disables a gate. */
-    if (errno == ERANGE || end == raw || *end != '\0') {
-        return fallback;
-    }
-    return value;
+    long value = 0;
+    return cbm_env_long(name, &value) ? value : fallback;
 }
 
 /* The contract is opt-in. Unset, empty, or "0" leaves the historical 0/1
